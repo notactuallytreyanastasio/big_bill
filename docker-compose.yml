@@ -1,0 +1,61 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "4000:4000"
+    environment:
+      DB_HOSTNAME: db
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      DB_DATABASE: big_bill_dev
+      PHX_HOST: localhost
+      PORT: "4000"
+    depends_on:
+      db:
+        condition: service_healthy
+    develop:
+      watch:
+        - action: sync
+          path: ./lib
+          target: /app/lib
+        - action: sync
+          path: ./assets
+          target: /app/assets
+        - action: sync
+          path: ./priv
+          target: /app/priv
+        - action: sync
+          path: ./config
+          target: /app/config
+        - action: sync
+          path: ./test
+          target: /app/test
+
+  graph:
+    build:
+      context: .
+      dockerfile: Dockerfile.graph
+    volumes:
+      - ./.deciduous:/data/.deciduous
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:

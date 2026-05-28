@@ -1,0 +1,30 @@
+FROM hexpm/elixir:1.18.3-erlang-27.3.4-debian-bookworm-20250520
+
+RUN apt-get update && \
+    apt-get install -y build-essential git curl inotify-tools && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mix local.hex --force && \
+    mix local.rebar --force
+
+ENV MIX_ENV=dev
+
+WORKDIR /app
+
+COPY mix.exs mix.lock ./
+RUN mix deps.get
+
+COPY config ./config
+RUN mix deps.compile
+
+COPY lib ./lib
+COPY priv ./priv
+COPY assets ./assets
+COPY test ./test
+
+RUN mix tailwind.install --if-missing && \
+    mix esbuild.install --if-missing
+
+EXPOSE 4000
+
+CMD mix ecto.create && mix ecto.migrate && mix phx.server

@@ -1,0 +1,6 @@
+duckdb>=0.10.0
+markdown-it-py>=3.0.0
+python-dateutil>=2.9.0
+regex>=2024.0.0
+sentence-transformers>=3.0.0
+psycopg2-binary>=2.9.0

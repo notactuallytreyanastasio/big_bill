@@ -1,0 +1,9 @@
+FROM node:22-alpine
+
+RUN npm install -g deciduous
+
+WORKDIR /data
+
+EXPOSE 3000
+
+CMD ["deciduous", "serve", "--host", "0.0.0.0", "--port", "3000"]
