@@ -2,21 +2,19 @@
 
 import re
 
-# Dollar amount patterns
+# Dollar amount patterns — multiplier must be a full word, not a single letter
+# that could be the start of the next word
 DOLLAR_PATTERN = re.compile(
     r"\$\s*([\d,]+(?:\.\d+)?)\s*"
-    r"(?:(billion|million|trillion|B|M|T))?"
+    r"(?:(billion|million|trillion)\b)?"
     r"(?:\s*(?:per\s+year|/year|/yr|annually))?"
     , re.IGNORECASE
 )
 
 MULTIPLIERS = {
     "billion": 1_000_000_000,
-    "b": 1_000_000_000,
     "million": 1_000_000,
-    "m": 1_000_000,
     "trillion": 1_000_000_000_000,
-    "t": 1_000_000_000_000,
 }
 
 DIRECTION_KEYWORDS = {

@@ -1,4 +1,4 @@
-FROM hexpm/elixir:1.18.3-erlang-27.3.4-debian-bookworm-20250520
+FROM hexpm/elixir:1.18.3-erlang-27.3.4.12-debian-bookworm-20260518
 
 RUN apt-get update && \
     apt-get install -y build-essential git curl inotify-tools && \

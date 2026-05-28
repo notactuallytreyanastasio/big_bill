@@ -2,7 +2,9 @@ defmodule BigBillWeb.DrilldownLive do
   use BigBillWeb, :live_view
 
   alias BigBill.Search
+  alias BigBill.Search.Advanced
   alias BigBill.Legislation.Parser
+  alias BigBill.Legislation.Linkifier
 
   @title_boundaries Parser.title_boundaries()
 
@@ -43,8 +45,8 @@ defmodule BigBillWeb.DrilldownLive do
     socket =
       socket
       |> assign(:page_title, "Drilldown Search")
+      |> assign(:view_mode, :entities)
       |> assign(:filters, [default_filter()])
-      |> assign(:scopes, [])
       |> assign(:scope_titles, MapSet.new())
       |> assign(:scope_all_titles, false)
       |> assign(:scope_analysis_files, MapSet.new())
@@ -59,6 +61,15 @@ defmodule BigBillWeb.DrilldownLive do
       |> assign(:filter_types, @filter_types)
       |> assign(:title_boundaries, @title_boundaries)
       |> assign(:analysis_files, @analysis_files)
+      |> assign(:entities, [])
+      |> assign(:money_flows, [])
+      |> assign(:entity_filter, "all")
+      |> assign(:show_network_modal, false)
+      |> assign(:show_section_modal, false)
+      |> assign(:section_preview, nil)
+
+    # Auto-load entities on mount since it's the default view
+    send(self(), :load_initial_data)
 
     {:ok, socket}
   end
@@ -68,6 +79,74 @@ defmodule BigBillWeb.DrilldownLive do
   # -------------------------------------------------------------------
 
   @impl true
+  def handle_event("switch_view", %{"mode" => mode}, socket) do
+    mode = String.to_existing_atom(mode)
+    socket = assign(socket, :view_mode, mode)
+
+    socket =
+      case mode do
+        :entities -> load_entities(socket)
+        :money -> load_money(socket)
+        _ -> socket
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("filter_entities", %{"outcome" => outcome}, socket) do
+    {:noreply, assign(socket, :entity_filter, outcome)}
+  end
+
+  def handle_event("preview_section", %{"sec" => sec_num}, socket) do
+    result = Search.get_full_content(%{source: :bill, section_number: sec_num})
+
+    socket =
+      socket
+      |> assign(:section_preview, result)
+      |> assign(:show_section_modal, true)
+
+    {:noreply, socket}
+  end
+
+  def handle_event("close_section_preview", _params, socket) do
+    {:noreply, assign(socket, :show_section_modal, false)}
+  end
+
+  def handle_event("open_network", _params, socket) do
+    socket = assign(socket, :show_network_modal, true)
+    # Re-push network data so hook renders when modal opens
+    socket = push_event(socket, "network_data", %{entities: socket.assigns.entities})
+    {:noreply, socket}
+  end
+
+  def handle_event("close_network", _params, socket) do
+    {:noreply, assign(socket, :show_network_modal, false)}
+  end
+
+  # Form-based filter updates (fixes the bare-input phx-change issue)
+  def handle_event("form_change", params, socket) do
+    filters =
+      Enum.map(socket.assigns.filters, fn f ->
+        value = Map.get(params, "value_#{f.id}", f.value)
+        type_str = Map.get(params, "type_#{f.id}")
+        type = if type_str, do: String.to_existing_atom(type_str), else: f.type
+
+        near_n =
+          case Map.get(params, "near_#{f.id}") do
+            nil -> f.near_n
+            n_str ->
+              case Integer.parse(n_str) do
+                {val, _} -> max(1, val)
+                :error -> f.near_n
+              end
+          end
+
+        %{f | value: value, type: type, near_n: near_n}
+      end)
+
+    {:noreply, assign(socket, :filters, filters)}
+  end
+
   def handle_event("add_filter", _params, socket) do
     filters = socket.assigns.filters ++ [default_filter()]
     {:noreply, assign(socket, :filters, filters)}
@@ -76,40 +155,6 @@ defmodule BigBillWeb.DrilldownLive do
   def handle_event("remove_filter", %{"id" => id}, socket) do
     filters = Enum.reject(socket.assigns.filters, &(&1.id == id))
     filters = if filters == [], do: [default_filter()], else: filters
-    {:noreply, assign(socket, :filters, filters)}
-  end
-
-  def handle_event("update_filter_type", %{"id" => id, "type" => type}, socket) do
-    type = String.to_existing_atom(type)
-
-    filters =
-      Enum.map(socket.assigns.filters, fn f ->
-        if f.id == id, do: %{f | type: type}, else: f
-      end)
-
-    {:noreply, assign(socket, :filters, filters)}
-  end
-
-  def handle_event("update_filter_value", %{"id" => id, "value" => value}, socket) do
-    filters =
-      Enum.map(socket.assigns.filters, fn f ->
-        if f.id == id, do: %{f | value: value}, else: f
-      end)
-
-    {:noreply, assign(socket, :filters, filters)}
-  end
-
-  def handle_event("update_filter_near_n", %{"id" => id, "n" => n}, socket) do
-    n = case Integer.parse(n) do
-      {val, _} -> max(1, val)
-      :error -> 5
-    end
-
-    filters =
-      Enum.map(socket.assigns.filters, fn f ->
-        if f.id == id, do: %{f | near_n: n}, else: f
-      end)
-
     {:noreply, assign(socket, :filters, filters)}
   end
 
@@ -135,7 +180,7 @@ defmodule BigBillWeb.DrilldownLive do
       |> assign(:scope_all_titles, new_val)
       |> assign(:scope_titles, if(new_val, do: MapSet.new(Enum.map(@title_boundaries, & &1.num)), else: MapSet.new()))
 
-    {:noreply, socket}
+    {:noreply, maybe_reload_data(socket)}
   end
 
   def handle_event("toggle_title", %{"num" => num}, socket) do
@@ -154,7 +199,7 @@ defmodule BigBillWeb.DrilldownLive do
       |> assign(:scope_titles, titles)
       |> assign(:scope_all_titles, all)
 
-    {:noreply, socket}
+    {:noreply, maybe_reload_data(socket)}
   end
 
   def handle_event("toggle_all_analysis", _params, socket) do
@@ -220,7 +265,6 @@ defmodule BigBillWeb.DrilldownLive do
   end
 
   def handle_event("find_related", %{"section" => section_number}, socket) do
-    # Search for cross-references to this section
     related_results = Search.search(section_number, :all) |> Enum.take(8)
 
     panel = %{
@@ -236,6 +280,10 @@ defmodule BigBillWeb.DrilldownLive do
   end
 
   @impl true
+  def handle_info(:load_initial_data, socket) do
+    {:noreply, load_entities(socket)}
+  end
+
   def handle_info(:execute_search, socket) do
     query = build_query_string(socket.assigns.filters)
     facets = determine_facets(socket.assigns)
@@ -259,6 +307,61 @@ defmodule BigBillWeb.DrilldownLive do
       |> assign(:searching, false)
 
     {:noreply, socket}
+  end
+
+  # -------------------------------------------------------------------
+  # Data loaders
+  # -------------------------------------------------------------------
+
+  defp load_entities(socket) do
+    scope = duckdb_scope(socket.assigns)
+    entities = Advanced.entities_in_scope(scope)
+
+    entities =
+      case entities do
+        {:error, _} -> []
+        list when is_list(list) -> list
+        _ -> []
+      end
+
+    socket
+    |> assign(:entities, entities)
+    |> push_event("entity_data", %{entities: entities})
+    |> push_event("network_data", %{entities: entities})
+  end
+
+  defp load_money(socket) do
+    scope = duckdb_scope(socket.assigns)
+    flows = Advanced.money_in_scope(scope)
+
+    flows =
+      case flows do
+        {:error, _} -> []
+        list when is_list(list) -> list
+        _ -> []
+      end
+
+    socket
+    |> assign(:money_flows, flows)
+    |> push_event("money_data", %{flows: flows})
+  end
+
+  defp maybe_reload_data(socket) do
+    case socket.assigns.view_mode do
+      :entities -> load_entities(socket)
+      :money -> load_money(socket)
+      _ -> socket
+    end
+  end
+
+  defp duckdb_scope(assigns) do
+    titles = assigns.scope_titles
+
+    case MapSet.size(titles) do
+      0 -> :all
+      1 -> {:title, Enum.at(MapSet.to_list(titles), 0)}
+      _ -> :all
+    end
   end
 
   # -------------------------------------------------------------------
@@ -363,6 +466,44 @@ defmodule BigBillWeb.DrilldownLive do
     |> Enum.join(" ")
   end
 
+  defp filtered_entities(entities, "all"), do: entities
+  defp filtered_entities(entities, outcome), do: Enum.filter(entities, &(&1.outcome == outcome))
+
+  defp entity_summary(entities) do
+    benefits = Enum.count(entities, &(&1.outcome == "benefits"))
+    loses = Enum.count(entities, &(&1.outcome == "loses"))
+    unique = entities |> Enum.map(& &1.entity_name) |> Enum.uniq() |> length()
+    {benefits, loses, unique}
+  end
+
+  defp format_dollars(nil), do: nil
+  defp format_dollars(0), do: nil
+  defp format_dollars(+0.0), do: nil
+  defp format_dollars(n) when is_float(n) or is_integer(n) do
+    cond do
+      n >= 1.0e12 -> "$#{:erlang.float_to_binary(n / 1.0e12, decimals: 2)}T"
+      n >= 1.0e9 -> "$#{:erlang.float_to_binary(n / 1.0e9, decimals: 2)}B"
+      n >= 1.0e6 -> "$#{:erlang.float_to_binary(n / 1.0e6, decimals: 1)}M"
+      n >= 1.0e3 -> "$#{:erlang.float_to_binary(n / 1.0e3, decimals: 0)}K"
+      true -> "$#{round(n)}"
+    end
+  end
+  defp format_dollars(_), do: nil
+
+  defp money_summary(flows) do
+    total = flows |> Enum.map(& &1.amount_dollars) |> Enum.reject(&is_nil/1) |> Enum.sum()
+    count = length(flows)
+    {count, total}
+  end
+
+  defp direction_badge_class("appropriation"), do: "bg-blue-100 text-blue-700"
+  defp direction_badge_class("spending"), do: "bg-blue-100 text-blue-700"
+  defp direction_badge_class("rescission"), do: "bg-red-100 text-red-700"
+  defp direction_badge_class("cut"), do: "bg-red-100 text-red-700"
+  defp direction_badge_class("revenue"), do: "bg-green-100 text-green-700"
+  defp direction_badge_class("tax"), do: "bg-green-100 text-green-700"
+  defp direction_badge_class(_), do: "bg-gray-100 text-gray-700"
+
   # -------------------------------------------------------------------
   # Render
   # -------------------------------------------------------------------
@@ -371,118 +512,311 @@ defmodule BigBillWeb.DrilldownLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="max-w-[1600px] mx-auto px-4 py-6">
+      <div class="max-w-[1920px] mx-auto px-6 py-6">
         <%!-- Header --%>
         <div class="flex items-center justify-between mb-6">
           <div>
             <.link navigate={~p"/"} class="text-sm text-blue-600 hover:text-blue-800 mb-1 inline-block">
               &larr; Back to Dashboard
             </.link>
-            <h1 class="text-2xl font-bold text-gray-900">Drilldown Search</h1>
-            <p class="text-sm text-gray-500 mt-1">Build complex queries with visual filters and scoped search</p>
+            <h1 class="text-2xl font-bold text-gray-900">Drilldown</h1>
+            <p class="text-sm text-gray-500 mt-1">Search the bill, explore who wins and loses, follow the money</p>
           </div>
           <.link navigate={~p"/search"} class="text-sm px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-50 transition-colors">
             Simple Search
           </.link>
         </div>
 
-        <div class="flex gap-6">
-          <%!-- Sidebar: Scope Panel --%>
-          <aside class={[
-            "shrink-0 transition-all duration-300 overflow-hidden",
-            if(@sidebar_open, do: "w-64", else: "w-0")
-          ]}>
+        <%!-- Tabs --%>
+        <div class="flex gap-1 mb-5 border-b border-gray-200">
+          <button
+            :for={{mode, label, icon} <- [
+              {:entities, "Winners & Losers", "hero-user-group"},
+              {:money, "Money Flows", "hero-banknotes"},
+              {:search, "Text Search", "hero-magnifying-glass"}
+            ]}
+            phx-click="switch_view"
+            phx-value-mode={mode}
+            class={[
+              "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+              if(@view_mode == mode,
+                do: "border-blue-600 text-blue-600",
+                else: "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              )
+            ]}
+          >
+            <.icon name={icon} class="w-4 h-4" />
+            {label}
+          </button>
+        </div>
+
+        <%!-- ============ ENTITIES VIEW (full width) ============ --%>
+            <div :if={@view_mode == :entities}>
+              <% {ben_count, lose_count, unique_count} = entity_summary(@entities) %>
+
+              <%!-- Stats + Network button --%>
+              <div class="grid grid-cols-4 gap-4 mb-5">
+                <div class="bg-white rounded-lg border border-gray-200 p-4">
+                  <div class="text-2xl font-bold text-green-600">{ben_count}</div>
+                  <div class="text-xs text-gray-500 mt-1">Benefit mentions</div>
+                </div>
+                <div class="bg-white rounded-lg border border-gray-200 p-4">
+                  <div class="text-2xl font-bold text-red-600">{lose_count}</div>
+                  <div class="text-xs text-gray-500 mt-1">Lose mentions</div>
+                </div>
+                <div class="bg-white rounded-lg border border-gray-200 p-4">
+                  <div class="text-2xl font-bold text-gray-800">{unique_count}</div>
+                  <div class="text-xs text-gray-500 mt-1">Unique entities</div>
+                </div>
+                <button
+                  phx-click="open_network"
+                  class="bg-white rounded-lg border border-gray-200 p-4 hover:border-purple-300 hover:shadow-md transition-all text-left group"
+                >
+                  <div class="flex items-center gap-2">
+                    <.icon name="hero-share" class="w-5 h-5 text-purple-500" />
+                    <span class="text-sm font-semibold text-gray-700 group-hover:text-purple-700">Network Graph</span>
+                  </div>
+                  <div class="text-xs text-gray-400 mt-1">View entity-section connections</div>
+                </button>
+              </div>
+
+              <%!-- Full-width D3 Chart --%>
+              <div class="bg-white rounded-lg border border-gray-200 shadow-sm p-5 mb-5">
+                <h3 class="text-lg font-bold text-gray-900 mb-4">Who Benefits vs Who Loses</h3>
+                <div id="entity-chart" phx-hook="EntityChart" phx-update="ignore" class="w-full overflow-x-auto"></div>
+              </div>
+
+              <%!-- Full-width Filter + Table --%>
+              <div class="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                <div class="px-5 py-4 bg-gray-50 border-b border-gray-200 flex items-center gap-3">
+                  <h3 class="text-lg font-bold text-gray-900">Entity Details</h3>
+                  <div class="flex gap-1 ml-auto">
+                    <button
+                      :for={{val, label, color} <- [
+                        {"all", "All", "gray"},
+                        {"benefits", "Benefits", "green"},
+                        {"loses", "Loses", "red"}
+                      ]}
+                      phx-click="filter_entities"
+                      phx-value-outcome={val}
+                      class={[
+                        "px-3 py-1 rounded-full text-xs font-medium transition-colors",
+                        if(@entity_filter == val,
+                          do: "bg-#{color}-100 text-#{color}-700 ring-1 ring-#{color}-300",
+                          else: "text-gray-500 hover:bg-gray-100"
+                        )
+                      ]}
+                    >
+                      {label}
+                    </button>
+                  </div>
+                </div>
+                <div class="max-h-[600px] overflow-y-auto">
+                  <table class="w-full text-sm">
+                    <thead class="sticky top-0 bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Entity</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Type</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Outcome</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Section</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Detail</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        :for={entity <- filtered_entities(@entities, @entity_filter)}
+                        class="border-b border-gray-100 hover:bg-gray-50 transition-colors"
+                      >
+                        <td class="px-4 py-2.5 font-medium text-gray-900">{entity.entity_name}</td>
+                        <td class="px-4 py-2.5">
+                          <span class="inline-flex px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600">
+                            {entity.entity_type}
+                          </span>
+                        </td>
+                        <td class="px-4 py-2.5">
+                          <span class={[
+                            "inline-flex px-2 py-0.5 rounded-full text-xs font-medium",
+                            if(entity.outcome == "benefits", do: "bg-green-100 text-green-700", else: "bg-red-100 text-red-700")
+                          ]}>
+                            {entity.outcome}
+                          </span>
+                        </td>
+                        <td class="px-4 py-2.5">
+                          <button
+                            :if={entity.section_number}
+                            phx-click="preview_section"
+                            phx-value-sec={entity.section_number}
+                            class="group relative text-blue-600 hover:text-blue-800 text-xs font-medium underline decoration-dotted cursor-pointer"
+                          >
+                            &sect;{entity.section_number}
+                            <span class="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-72 p-3 rounded-lg bg-gray-900 text-white text-xs leading-relaxed shadow-xl z-50">
+                              <span class="font-semibold text-blue-300">Section {entity.section_number}</span>
+                              <span class="block mt-1 text-gray-300 line-clamp-4">{entity.detail}</span>
+                              <span class="block mt-1 text-blue-400">Click to preview section &rarr;</span>
+                            </span>
+                          </button>
+                        </td>
+                        <td class="px-4 py-2.5 text-gray-600 text-xs max-w-md">
+                          <span class="line-clamp-2">{entity.detail}</span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div :if={filtered_entities(@entities, @entity_filter) == []} class="py-12 text-center text-gray-400">
+                    No entities found. Select a title scope or load all data.
+                  </div>
+                </div>
+              </div>
+
+              <%!-- Network Graph Modal --%>
+              <div
+                :if={@show_network_modal}
+                data-modal
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+              >
+                <div
+                  class="bg-white rounded-xl shadow-2xl w-[95vw] h-[90vh] flex flex-col overflow-hidden"
+                  phx-click-away="close_network"
+                >
+                  <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
+                    <div>
+                      <h2 class="text-lg font-bold text-gray-900">Entity-Section Network</h2>
+                      <p class="text-xs text-gray-500">Drag to rearrange. Green = benefits, Red = loses. Scroll to zoom.</p>
+                    </div>
+                    <button phx-click="close_network" class="p-2 hover:bg-gray-200 rounded-lg transition-colors">
+                      <.icon name="hero-x-mark" class="w-5 h-5 text-gray-500" />
+                    </button>
+                  </div>
+                  <div class="flex-1 p-2">
+                    <div id="entity-network" phx-hook="EntityNetwork" phx-update="ignore" class="w-full h-full"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <%!-- ============ MONEY VIEW ============ --%>
+            <div :if={@view_mode == :money}>
+              <% {flow_count, total_dollars} = money_summary(@money_flows) %>
+
+              <%!-- Stats bar --%>
+              <div class="grid grid-cols-2 gap-4 mb-5">
+                <div class="bg-white rounded-lg border border-gray-200 p-5">
+                  <div class="text-3xl font-bold text-gray-800">{flow_count}</div>
+                  <div class="text-sm text-gray-500 mt-1">Money flow provisions</div>
+                </div>
+                <div class="bg-white rounded-lg border border-gray-200 p-5">
+                  <div class="text-3xl font-bold text-blue-600">{format_dollars(total_dollars) || "$0"}</div>
+                  <div class="text-sm text-gray-500 mt-1">Total quantified</div>
+                </div>
+              </div>
+
+              <%!-- Full-width D3 Chart --%>
+              <div class="bg-white rounded-lg border border-gray-200 shadow-sm p-5 mb-5">
+                <h3 class="text-lg font-bold text-gray-900 mb-4">Money Flows by Amount</h3>
+                <div id="money-chart" phx-hook="MoneyChart" phx-update="ignore" class="w-full overflow-x-auto"></div>
+              </div>
+
+              <%!-- Full-width Table --%>
+              <div class="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                <div class="px-5 py-4 bg-gray-50 border-b border-gray-200">
+                  <h3 class="text-lg font-bold text-gray-900">All Money Flows</h3>
+                </div>
+                <div class="max-h-[600px] overflow-y-auto">
+                  <table class="w-full text-sm">
+                    <thead class="sticky top-0 bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Section</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Title</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Amount</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Direction</th>
+                        <th class="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        :for={flow <- @money_flows}
+                        class="border-b border-gray-100 hover:bg-gray-50 transition-colors"
+                      >
+                        <td class="px-4 py-2.5">
+                          <button
+                            :if={flow.section_number}
+                            phx-click="preview_section"
+                            phx-value-sec={flow.section_number}
+                            class="group relative text-blue-600 hover:text-blue-800 font-medium underline decoration-dotted cursor-pointer"
+                          >
+                            &sect;{flow.section_number}
+                            <span class="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-72 p-3 rounded-lg bg-gray-900 text-white text-xs leading-relaxed shadow-xl z-50">
+                              <span class="font-semibold text-blue-300">Section {flow.section_number}</span>
+                              <span class="block mt-1 text-gray-400">{flow.title_name}</span>
+                              <span :if={flow.notes} class="block mt-1 text-gray-300 line-clamp-3">{flow.notes}</span>
+                              <span class="block mt-1 text-blue-400">Click to preview section &rarr;</span>
+                            </span>
+                          </button>
+                        </td>
+                        <td class="px-4 py-2.5 text-gray-600 text-xs">{flow.title_name}</td>
+                        <td class="px-4 py-2.5 font-mono font-semibold text-gray-900">
+                          {format_dollars(flow.amount_dollars) || flow.amount_text}
+                        </td>
+                        <td class="px-4 py-2.5">
+                          <span :if={flow.direction} class={"inline-flex px-2 py-0.5 rounded-full text-xs font-medium #{direction_badge_class(flow.direction)}"}>
+                            {flow.direction}
+                          </span>
+                        </td>
+                        <td class="px-4 py-2.5 text-gray-600 text-xs max-w-sm truncate" title={flow.notes}>
+                          {flow.notes}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div :if={@money_flows == []} class="py-12 text-center text-gray-400">
+                    No money flows found. Select a title scope or load all data.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+        <%!-- ============ SEARCH VIEW (with sidebar) ============ --%>
+        <div :if={@view_mode == :search} class="flex gap-6">
+          <%!-- Sidebar --%>
+          <aside class={["shrink-0 transition-all duration-300 overflow-hidden", if(@sidebar_open, do: "w-64", else: "w-0")]}>
             <div class="w-64 bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
               <div class="px-4 py-3 bg-gray-50 border-b border-gray-200">
-                <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wider">Search Scope</h2>
+                <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wider">Scope</h2>
               </div>
-              <div class="p-3 max-h-[calc(100vh-280px)] overflow-y-auto space-y-4">
-                <%!-- Titles --%>
+              <div class="p-3 max-h-[calc(100vh-320px)] overflow-y-auto space-y-4">
                 <div>
                   <label class="flex items-center gap-2 cursor-pointer group mb-2">
-                    <input
-                      type="checkbox"
-                      checked={@scope_all_titles}
-                      phx-click="toggle_all_titles"
-                      class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"
-                    />
-                    <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">All Titles</span>
+                    <input type="checkbox" checked={@scope_all_titles} phx-click="toggle_all_titles" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4" />
+                    <span class="text-sm font-semibold text-gray-700">All Titles</span>
                   </label>
                   <div class="ml-6 space-y-1">
-                    <label
-                      :for={tb <- @title_boundaries}
-                      class="flex items-center gap-2 cursor-pointer group"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={MapSet.member?(@scope_titles, tb.num)}
-                        phx-click="toggle_title"
-                        phx-value-num={tb.num}
-                        class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5"
-                      />
-                      <span class="text-xs text-gray-600 group-hover:text-gray-800 leading-tight">
-                        Title {to_roman(tb.num)} -- {tb.name}
-                      </span>
+                    <label :for={tb <- @title_boundaries} class="flex items-center gap-2 cursor-pointer group">
+                      <input type="checkbox" checked={MapSet.member?(@scope_titles, tb.num)} phx-click="toggle_title" phx-value-num={tb.num} class="rounded border-gray-300 text-blue-600 h-3.5 w-3.5" />
+                      <span class="text-xs text-gray-600 leading-tight">Title {to_roman(tb.num)} -- {tb.name}</span>
                     </label>
                   </div>
                 </div>
-
-                <%!-- Analysis Files --%>
                 <div class="border-t border-gray-100 pt-3">
                   <label class="flex items-center gap-2 cursor-pointer group mb-2">
-                    <input
-                      type="checkbox"
-                      checked={@scope_all_analysis}
-                      phx-click="toggle_all_analysis"
-                      class="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4"
-                    />
-                    <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">All Analysis Files</span>
+                    <input type="checkbox" checked={@scope_all_analysis} phx-click="toggle_all_analysis" class="rounded border-gray-300 text-emerald-600 h-4 w-4" />
+                    <span class="text-sm font-semibold text-gray-700">All Analysis</span>
                   </label>
                   <div class="ml-6 space-y-1">
-                    <label
-                      :for={file <- @analysis_files}
-                      class="flex items-center gap-2 cursor-pointer group"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={MapSet.member?(@scope_analysis_files, file)}
-                        phx-click="toggle_analysis_file"
-                        phx-value-file={file}
-                        class="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 h-3.5 w-3.5"
-                      />
-                      <span class="text-xs text-gray-600 group-hover:text-gray-800 truncate leading-tight">
-                        {analysis_display_name(file)}
-                      </span>
+                    <label :for={file <- @analysis_files} class="flex items-center gap-2 cursor-pointer group">
+                      <input type="checkbox" checked={MapSet.member?(@scope_analysis_files, file)} phx-click="toggle_analysis_file" phx-value-file={file} class="rounded border-gray-300 text-emerald-600 h-3.5 w-3.5" />
+                      <span class="text-xs text-gray-600 truncate">{analysis_display_name(file)}</span>
                     </label>
                   </div>
                 </div>
-
-                <%!-- Graph Nodes --%>
                 <div class="border-t border-gray-100 pt-3">
                   <label class="flex items-center gap-2 cursor-pointer group mb-2">
-                    <input
-                      type="checkbox"
-                      checked={@scope_all_graph}
-                      phx-click="toggle_all_graph"
-                      class="rounded border-gray-300 text-purple-600 focus:ring-purple-500 h-4 w-4"
-                    />
-                    <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">Graph Nodes</span>
+                    <input type="checkbox" checked={@scope_all_graph} phx-click="toggle_all_graph" class="rounded border-gray-300 text-purple-600 h-4 w-4" />
+                    <span class="text-sm font-semibold text-gray-700">Graph Nodes</span>
                   </label>
                   <div class="ml-6 space-y-1">
-                    <label
-                      :for={type <- ~w(action observation goal decision option outcome)}
-                      class="flex items-center gap-2 cursor-pointer group"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={MapSet.member?(@scope_graph_types, type)}
-                        phx-click="toggle_graph_type"
-                        phx-value-type={type}
-                        class="rounded border-gray-300 text-purple-600 focus:ring-purple-500 h-3.5 w-3.5"
-                      />
-                      <span class="text-xs text-gray-600 group-hover:text-gray-800 capitalize">
-                        {type}s only
-                      </span>
+                    <label :for={type <- ~w(action observation goal decision option outcome)} class="flex items-center gap-2 cursor-pointer group">
+                      <input type="checkbox" checked={MapSet.member?(@scope_graph_types, type)} phx-click="toggle_graph_type" phx-value-type={type} class="rounded border-gray-300 text-purple-600 h-3.5 w-3.5" />
+                      <span class="text-xs text-gray-600 capitalize">{type}s only</span>
                     </label>
                   </div>
                 </div>
@@ -490,272 +824,262 @@ defmodule BigBillWeb.DrilldownLive do
             </div>
           </aside>
 
-          <%!-- Main content --%>
           <div class="flex-1 min-w-0">
-            <%!-- Toggle sidebar button --%>
-            <button
-              phx-click="toggle_sidebar"
-              class="mb-3 text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1 transition-colors"
-            >
-              <svg :if={@sidebar_open} xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-              </svg>
-              <svg :if={!@sidebar_open} xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-              </svg>
-              {if @sidebar_open, do: "Hide scope panel", else: "Show scope panel"}
+            <button phx-click="toggle_sidebar" class="mb-3 text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1">
+              <.icon name={if @sidebar_open, do: "hero-chevron-double-left", else: "hero-chevron-double-right"} class="w-4 h-4" />
+              {if @sidebar_open, do: "Hide scope", else: "Show scope"}
             </button>
 
-            <%!-- Query Builder --%>
-            <div class="bg-white rounded-lg border border-gray-200 shadow-sm p-4 mb-4">
-              <div class="flex items-center justify-between mb-3">
-                <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wider">Query Builder</h2>
-                <div class="flex items-center gap-2 text-xs text-gray-400">
-                  <span :if={active_filter_count(@filters) > 0}>
-                    {active_filter_count(@filters)} active filter(s)
-                  </span>
-                  <span :if={active_scope_count(assigns) > 0} class="border-l border-gray-300 pl-2">
-                    {active_scope_count(assigns)} scope(s)
-                  </span>
-                </div>
-              </div>
-
-              <div class="space-y-2">
-                <div :for={{filter, idx} <- Enum.with_index(@filters)} class="group">
-                  <%!-- Connector between filters --%>
-                  <div :if={idx > 0} class="flex justify-center my-1">
-                    <button
-                      phx-click="toggle_connector"
-                      phx-value-id={filter.id}
-                      class={[
-                        "px-3 py-0.5 rounded-full text-xs font-semibold transition-colors cursor-pointer",
-                        if(filter.connector == :and,
-                          do: "bg-blue-50 text-blue-600 hover:bg-blue-100",
-                          else: "bg-orange-50 text-orange-600 hover:bg-orange-100"
-                        )
-                      ]}
-                    >
-                      {if filter.connector == :and, do: "AND", else: "OR"}
-                    </button>
+            <form phx-change="form_change" phx-submit="search" class="bg-white rounded-lg border border-gray-200 shadow-sm p-4 mb-4">
+                <div class="flex items-center justify-between mb-3">
+                  <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wider">Query Builder</h2>
+                  <div class="flex items-center gap-2 text-xs text-gray-400">
+                    <span :if={active_filter_count(@filters) > 0}>
+                      {active_filter_count(@filters)} active filter(s)
+                    </span>
+                    <span :if={active_scope_count(assigns) > 0} class="border-l border-gray-300 pl-2">
+                      {active_scope_count(assigns)} scope(s)
+                    </span>
                   </div>
+                </div>
 
-                  <%!-- Filter row --%>
-                  <div class="flex items-center gap-2 bg-gray-50 rounded-lg p-2 border border-gray-100 group-hover:border-gray-300 transition-colors">
-                    <%!-- Type dropdown --%>
-                    <select
-                      phx-change="update_filter_type"
-                      phx-value-id={filter.id}
-                      name="type"
-                      class="text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white py-1.5 pr-8"
-                    >
-                      <option :for={{val, label} <- @filter_types} value={val} selected={filter.type == val}>
-                        {label}
-                      </option>
-                    </select>
-
-                    <%!-- Value input --%>
-                    <input
-                      type="text"
-                      value={filter.value}
-                      phx-change="update_filter_value"
-                      phx-value-id={filter.id}
-                      name="value"
-                      placeholder={filter_placeholder(filter.type)}
-                      phx-debounce="200"
-                      class="flex-1 text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 py-1.5"
-                    />
-
-                    <%!-- Near N input --%>
-                    <div :if={filter.type == :near} class="flex items-center gap-1">
-                      <span class="text-xs text-gray-500 whitespace-nowrap">within</span>
-                      <input
-                        type="number"
-                        value={filter.near_n}
-                        phx-change="update_filter_near_n"
+                <div class="space-y-2">
+                  <div :for={{filter, idx} <- Enum.with_index(@filters)} class="group">
+                    <%!-- Connector between filters --%>
+                    <div :if={idx > 0} class="flex justify-center my-1">
+                      <button
+                        type="button"
+                        phx-click="toggle_connector"
                         phx-value-id={filter.id}
-                        name="n"
-                        min="1"
-                        max="50"
-                        class="w-14 text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 py-1.5 text-center"
-                      />
-                      <span class="text-xs text-gray-500 whitespace-nowrap">words</span>
+                        class={[
+                          "px-3 py-0.5 rounded-full text-xs font-semibold transition-colors cursor-pointer",
+                          if(filter.connector == :and,
+                            do: "bg-blue-50 text-blue-600 hover:bg-blue-100",
+                            else: "bg-orange-50 text-orange-600 hover:bg-orange-100"
+                          )
+                        ]}
+                      >
+                        {if filter.connector == :and, do: "AND", else: "OR"}
+                      </button>
                     </div>
 
-                    <%!-- Remove button --%>
-                    <button
-                      phx-click="remove_filter"
-                      phx-value-id={filter.id}
-                      class="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                      title="Remove filter"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
+                    <%!-- Filter row --%>
+                    <div class="flex items-center gap-2 bg-gray-50 rounded-lg p-2 border border-gray-100 group-hover:border-gray-300 transition-colors">
+                      <select
+                        name={"type_#{filter.id}"}
+                        class="text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white py-1.5 pr-8"
+                      >
+                        <option :for={{val, label} <- @filter_types} value={val} selected={filter.type == val}>
+                          {label}
+                        </option>
+                      </select>
+
+                      <input
+                        type="text"
+                        value={filter.value}
+                        name={"value_#{filter.id}"}
+                        placeholder={filter_placeholder(filter.type)}
+                        phx-debounce="200"
+                        class="flex-1 text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 py-1.5"
+                      />
+
+                      <div :if={filter.type == :near} class="flex items-center gap-1">
+                        <span class="text-xs text-gray-500 whitespace-nowrap">within</span>
+                        <input
+                          type="number"
+                          value={filter.near_n}
+                          name={"near_#{filter.id}"}
+                          min="1"
+                          max="50"
+                          class="w-14 text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 py-1.5 text-center"
+                        />
+                        <span class="text-xs text-gray-500 whitespace-nowrap">words</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        phx-click="remove_filter"
+                        phx-value-id={filter.id}
+                        class="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                        title="Remove filter"
+                      >
+                        <.icon name="hero-x-mark" class="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <%!-- Actions --%>
-              <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
-                <button
-                  phx-click="add_filter"
-                  class="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 transition-colors"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                  </svg>
-                  Add Filter
-                </button>
-
-                <button
-                  phx-click="search"
-                  disabled={@searching or active_filter_count(@filters) == 0}
-                  class={[
-                    "px-5 py-2 rounded-lg text-sm font-semibold transition-all",
-                    if(active_filter_count(@filters) > 0,
-                      do: "bg-blue-600 text-white hover:bg-blue-700 shadow-sm hover:shadow",
-                      else: "bg-gray-200 text-gray-400 cursor-not-allowed"
-                    )
-                  ]}
-                >
-                  <%= if @searching do %>
-                    <span class="flex items-center gap-2">
-                      <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      Searching...
-                    </span>
-                  <% else %>
-                    Search
-                  <% end %>
-                </button>
-              </div>
-            </div>
-
-            <%!-- Results area --%>
-            <div class="flex gap-4">
-              <%!-- Results list --%>
-              <div class={[
-                "min-w-0 transition-all duration-300",
-                if(@related_panel, do: "flex-1", else: "w-full")
-              ]}>
-                <%!-- Result count --%>
-                <div :if={@result_count > 0} class="text-sm text-gray-500 mb-3">
-                  {if @result_count == 100, do: "Showing top 100", else: "#{@result_count}"} results
-                </div>
-
-                <%!-- Empty state --%>
-                <div :if={@results == [] and !@searching and active_filter_count(@filters) > 0} class="py-16 text-center bg-white rounded-lg border border-gray-200">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto text-gray-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                  <div class="text-gray-400 text-lg mb-1">Ready to search</div>
-                  <div class="text-gray-400 text-sm">Add filters above and click Search</div>
-                </div>
-
-                <%!-- Initial state --%>
-                <div :if={@results == [] and active_filter_count(@filters) == 0} class="py-16 text-center bg-white rounded-lg border border-gray-200">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto text-gray-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                  </svg>
-                  <div class="text-gray-400 text-lg mb-1">Build your query</div>
-                  <div class="text-gray-400 text-sm">Use the filter blocks above to construct a search query.<br/>Select scopes on the left to narrow results.</div>
-                </div>
-
-                <%!-- Result cards --%>
-                <div class="space-y-3">
-                  <div
-                    :for={result <- @results}
-                    class="bg-white rounded-lg border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all duration-200 overflow-hidden"
+                <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+                  <button
+                    type="button"
+                    phx-click="add_filter"
+                    class="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 transition-colors"
                   >
-                    <div class="px-5 py-4">
-                      <%!-- Header: badge + title --%>
-                      <div class="flex items-start gap-3 mb-2">
-                        <span class={"inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border mt-0.5 #{source_badge_class(result.source)}"}>
-                          {source_label(result.source)}
-                        </span>
-                        <div class="flex-1 min-w-0">
-                          <h3 class="font-semibold text-gray-900 leading-tight">
-                            {result.title}
-                          </h3>
+                    <.icon name="hero-plus" class="w-4 h-4" />
+                    Add Filter
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={@searching}
+                    class={[
+                      "px-5 py-2 rounded-lg text-sm font-semibold transition-all",
+                      "bg-blue-600 text-white hover:bg-blue-700 shadow-sm hover:shadow"
+                    ]}
+                  >
+                    <%= if @searching do %>
+                      <span class="flex items-center gap-2">
+                        <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Searching...
+                      </span>
+                    <% else %>
+                      Search
+                    <% end %>
+                  </button>
+                </div>
+              </form>
+
+              <%!-- Results --%>
+              <div class="flex gap-4">
+                <div class={[
+                  "min-w-0 transition-all duration-300",
+                  if(@related_panel, do: "flex-1", else: "w-full")
+                ]}>
+                  <div :if={@result_count > 0} class="text-sm text-gray-500 mb-3">
+                    {if @result_count == 100, do: "Showing top 100", else: "#{@result_count}"} results
+                  </div>
+
+                  <div :if={@results == [] and !@searching} class="py-16 text-center bg-white rounded-lg border border-gray-200">
+                    <.icon name="hero-magnifying-glass" class="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                    <div class="text-gray-400 text-lg mb-1">Ready to search</div>
+                    <div class="text-gray-400 text-sm">Add filters above and click Search</div>
+                  </div>
+
+                  <div class="space-y-3">
+                    <div
+                      :for={result <- @results}
+                      class="bg-white rounded-lg border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all duration-200 overflow-hidden cursor-pointer"
+                      phx-click={result.section_number && "preview_section"}
+                      phx-value-sec={result.section_number}
+                    >
+                      <div class="px-5 py-4">
+                        <div class="flex items-start gap-3 mb-2">
+                          <span class={"inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border mt-0.5 #{source_badge_class(result.source)}"}>
+                            {source_label(result.source)}
+                          </span>
+                          <div class="flex-1 min-w-0">
+                            <h3 class="font-semibold text-gray-900 leading-tight">{result.title}</h3>
+                          </div>
+                          <.icon :if={result.section_number} name="hero-arrow-top-right-on-square" class="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
+                        </div>
+                        <div class="text-sm text-gray-600 mt-2 leading-relaxed ml-[70px]">
+                          <span>{raw(result.snippet)}</span>
+                        </div>
+                        <div class="flex items-center gap-2 mt-3 ml-[70px]">
+                          <button
+                            :if={result.section_number}
+                            phx-click="find_related"
+                            phx-value-section={result.section_number}
+                            class="text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-600 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700 transition-colors"
+                          >
+                            Find Related
+                          </button>
+                          <button
+                            :if={result.section_number}
+                            phx-click="preview_section"
+                            phx-value-sec={result.section_number}
+                            class="text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors"
+                          >
+                            View Section
+                          </button>
                         </div>
                       </div>
+                    </div>
+                  </div>
+                </div>
 
-                      <%!-- Snippet --%>
-                      <div class="text-sm text-gray-600 mt-2 leading-relaxed pl-[calc(theme(spacing.3)+theme(spacing[2.5])+theme(spacing[2.5]))]">
-                        <span>{raw(result.snippet)}</span>
+                <%!-- Related panel --%>
+                <aside :if={@related_panel} class="w-80 shrink-0">
+                  <div class="bg-white rounded-lg border border-gray-200 shadow-sm sticky top-6">
+                    <div class="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                      <h3 class="text-sm font-semibold text-gray-700">
+                        Related to SEC. {@related_panel.source_section}
+                      </h3>
+                      <button
+                        phx-click="close_related"
+                        class="p-1 text-gray-400 hover:text-gray-600 rounded transition-colors"
+                      >
+                        <.icon name="hero-x-mark" class="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div class="p-3 space-y-2 max-h-[calc(100vh-300px)] overflow-y-auto">
+                      <div :if={@related_panel.related == []} class="text-sm text-gray-400 text-center py-4">
+                        No related sections found
                       </div>
-
-                      <%!-- Action buttons --%>
-                      <div class="flex items-center gap-2 mt-3 pl-[calc(theme(spacing.3)+theme(spacing[2.5])+theme(spacing[2.5]))]">
-                        <button
-                          :if={result.section_number}
-                          phx-click="find_related"
-                          phx-value-section={result.section_number}
-                          class="text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-600 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700 transition-colors"
-                        >
-                          Find Related
-                        </button>
+                      <div
+                        :for={rel <- @related_panel.related}
+                        class="p-2.5 rounded border border-gray-100 hover:border-blue-200 hover:bg-blue-50/30 transition-colors"
+                      >
+                        <div class="flex items-center gap-2 mb-1">
+                          <span class={"inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium #{source_badge_class(rel.source)}"}>
+                            {source_label(rel.source)}
+                          </span>
+                          <span class="text-xs font-medium text-gray-700 truncate">{rel.title}</span>
+                        </div>
+                        <div class="text-xs text-gray-500 line-clamp-2 leading-relaxed">
+                          {raw(rel.snippet)}
+                        </div>
                         <.link
-                          :if={result.section_number}
-                          navigate={~p"/section/#{result.section_number}"}
-                          class="text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors"
+                          :if={rel.section_number}
+                          navigate={~p"/section/#{rel.section_number}"}
+                          class="text-[10px] text-blue-600 hover:text-blue-800 mt-1 inline-block"
                         >
-                          View Section
+                          View section ->
                         </.link>
                       </div>
                     </div>
                   </div>
-                </div>
+                </aside>
               </div>
-
-              <%!-- Related panel --%>
-              <aside :if={@related_panel} class="w-80 shrink-0">
-                <div class="bg-white rounded-lg border border-gray-200 shadow-sm sticky top-6">
-                  <div class="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                    <h3 class="text-sm font-semibold text-gray-700">
-                      Related to SEC. {@related_panel.source_section}
-                    </h3>
-                    <button
-                      phx-click="close_related"
-                      class="p-1 text-gray-400 hover:text-gray-600 rounded transition-colors"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                  <div class="p-3 space-y-2 max-h-[calc(100vh-300px)] overflow-y-auto">
-                    <div :if={@related_panel.related == []} class="text-sm text-gray-400 text-center py-4">
-                      No related sections found
-                    </div>
-                    <div
-                      :for={rel <- @related_panel.related}
-                      class="p-2.5 rounded border border-gray-100 hover:border-blue-200 hover:bg-blue-50/30 transition-colors"
-                    >
-                      <div class="flex items-center gap-2 mb-1">
-                        <span class={"inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium #{source_badge_class(rel.source)}"}>
-                          {source_label(rel.source)}
-                        </span>
-                        <span class="text-xs font-medium text-gray-700 truncate">{rel.title}</span>
-                      </div>
-                      <div class="text-xs text-gray-500 line-clamp-2 leading-relaxed">
-                        {raw(rel.snippet)}
-                      </div>
-                      <.link
-                        :if={rel.section_number}
-                        navigate={~p"/section/#{rel.section_number}"}
-                        class="text-[10px] text-blue-600 hover:text-blue-800 mt-1 inline-block"
-                      >
-                        View section ->
-                      </.link>
-                    </div>
-                  </div>
-                </div>
-              </aside>
             </div>
+          </div>
+        </div>
+
+      <%!-- Section Preview Modal (z-[60] so it stacks above the network modal at z-50) --%>
+      <div
+        :if={@show_section_modal && @section_preview}
+        class="fixed inset-0 z-[60] flex items-center justify-center"
+      >
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" phx-click="close_section_preview"></div>
+        <div
+          class="relative bg-white rounded-xl shadow-2xl w-[85vw] max-w-5xl h-[85vh] flex flex-col overflow-hidden"
+        >
+          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50 shrink-0">
+            <div>
+              <h2 class="text-lg font-bold text-gray-900">{@section_preview.title}</h2>
+              <div class="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                <span :if={@section_preview.meta[:title_name]}>Title: {@section_preview.meta[:title_name]}</span>
+                <span :if={@section_preview.meta[:subtitle]}>Subtitle: {@section_preview.meta[:subtitle]}</span>
+                <span :if={@section_preview.meta[:lines]}>Lines: {@section_preview.meta[:lines]}</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <.link
+                navigate={~p"/section/#{@section_preview.section_number}"}
+                class="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+              >
+                Full Page View
+              </.link>
+              <button phx-click="close_section_preview" class="p-2 hover:bg-gray-200 rounded-lg transition-colors">
+                <.icon name="hero-x-mark" class="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+          </div>
+          <div class="flex-1 overflow-y-auto px-8 py-6" id={"section-text-#{@section_preview.section_number}"} phx-hook="SectionText">
+            <pre class="whitespace-pre-wrap text-sm text-gray-800 font-mono leading-relaxed"><%= raw(Linkifier.linkify(@section_preview.content)) %></pre>
           </div>
         </div>
       </div>

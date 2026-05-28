@@ -1,5 +1,7 @@
 import Config
 
+config :big_bill, :project_root, File.cwd!()
+
 # Configure your database
 config :big_bill, BigBill.Repo,
   username: "postgres",

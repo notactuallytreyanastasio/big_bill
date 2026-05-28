@@ -1,0 +1,129 @@
+================================================================================
+ACTION NODES WITHOUT RELATED OBSERVATIONS
+================================================================================
+
+218 of 327 sections lack impact analysis. Below are the highest-priority gaps
+organized by title and consequence severity.
+
+─────────────────────────────────────────────────────────────────────────────
+TITLE I: SNAP/Nutrition Changes (Behavior-Altering)
+─────────────────────────────────────────────────────────────────────────────
+
+High Priority (directly restrict benefits):
+  - SEC 10102: Work requirements modification
+  - SEC 10103: Standard utility allowances
+  - SEC 10104: Internet expense restrictions  
+  - SEC 10105: Matching funds requirements
+  - SEC 10106: Admin cost sharing
+  - SEC 10107: Education/obesity grant program
+  - SEC 10108: Alien SNAP eligibility
+
+→ Need observation: "SNAP benefit and eligibility restrictions create cascading
+  work requirement + expense reduction + immigration filtering chain"
+
+─────────────────────────────────────────────────────────────────────────────
+TITLE II: DoD Enhancements (Budget-Driven)
+─────────────────────────────────────────────────────────────────────────────
+
+All individual enhancement sections lack cumulative analysis:
+  - SEC 20001: Quality of Life
+  - SEC 20002: Shipbuilding
+  - SEC 20003: Air/Missile Defense
+  - SEC 20004: Munitions/Supply Chain
+  - SEC 20005: Low-Cost Weapons
+  - SEC 20006: Efficiency/Cybersecurity
+  - SEC 20007: Air Superiority
+
+→ Need observation: "Individual DoD enhancements total ~$150B and constitute
+  largest single-year defense supplemental in modern US history without
+  corresponding authorization changes"
+
+─────────────────────────────────────────────────────────────────────────────
+TITLE V: Energy Asymmetry (Structural)
+─────────────────────────────────────────────────────────────────────────────
+
+High Priority (mandate vs. restrict pattern):
+  - SEC 50101: Onshore O&G leasing (MANDATED)
+  - SEC 50102: Offshore O&G leasing (MANDATED)
+  - SEC 50103: Methane royalty repeal (MANDATED)
+  - SEC 50104: ANWR leasing (MANDATED)
+  - SEC 50105: NPR-Alaska (MANDATED)
+  - SEC 50201-50203: Coal leasing (MANDATED)
+
+vs. environmental rescissions (Title VI):
+  - SEC 60001-60009: 9 rescissions of clean energy/pollution programs
+
+→ Need observation: "Title V mandates fossil fuel leasing while Title VI
+  rescinds renewable energy and pollution control programs—asymmetric energy
+  policy forcing extraction-only framework"
+
+─────────────────────────────────────────────────────────────────────────────
+TITLE VII: Tax Changes (Distributional)
+─────────────────────────────────────────────────────────────────────────────
+
+Individual tax provisions lack combined impact analysis:
+  - SEC 70101-70102: TCJA extensions and expansions
+  - SEC 70301-70304: Business property expensing
+  - SEC 70501-70505: EV credit terminations (all 5)
+  - SEC 70120: SALT cap modifications
+
+EV Credit Terminations (all lack observation):
+  - SEC 70501: Previously-Owned Clean Vehicle Credit
+  - SEC 70502: New Clean Vehicle Credit  
+  - SEC 70503: Qualified Commercial Clean Vehicle Credit
+  - SEC 70504: Alternative Fuel Vehicle Refueling Property
+  - SEC 70505: Energy Efficient Home Improvement
+
+→ Need observation: "Complete elimination of all five EV-related tax credits
+  defunds electrification infrastructure and favors ICE vehicle owners"
+
+─────────────────────────────────────────────────────────────────────────────
+TITLE VII-B: Medicare/Medicaid Restrictions (Health Access)
+─────────────────────────────────────────────────────────────────────────────
+
+Individual restrictions lack integrated pattern view:
+  - SEC 71101: MSP enrollment moratorium
+  - SEC 71102: Medicaid/CHIP enrollment moratorium
+  - SEC 71103: Duplicate enrollment reduction
+  - SEC 71104: Deceased individuals in system
+  - SEC 71105: Deceased providers in system
+  - SEC 71119: Work requirements (Medicaid/CHIP)
+
+→ Need observation: "Concurrent Medicare (71201) + Medicaid (71119) +
+  ACA (71301-71302) eligibility/enrollment restrictions form coordinated
+  health coverage reduction across all federal programs"
+
+─────────────────────────────────────────────────────────────────────────────
+TITLE IX: Immigration/Border (Enforcement Architecture)
+─────────────────────────────────────────────────────────────────────────────
+
+Individual enforcement provisions lack integration view:
+  - SEC 90001: Border wall funding
+  - SEC 90002: CBP personnel/vehicles/facilities
+  - SEC 90003: Detention capacity
+  - SEC 90004: Border tech/screening
+  - SEC 90005: State/local assistance
+  - SEC 90006: Presidential residence protection
+
+→ Need observation: "Individual border enforcement provisions total $120B and
+  represent integrated pipeline: wall + personnel + detention + technology
+  + funding—designed as coordinated enforcement system"
+
+─────────────────────────────────────────────────────────────────────────────
+GAPS SUMMARY
+─────────────────────────────────────────────────────────────────────────────
+
+By consequence type:
+  • Welfare eligibility: 7 sections (SNAP, Medicaid, ACA)
+  • Tax distribution: 15+ sections (TCJA, EV credits, SALT)
+  • Environmental: 9 rescissions (clean energy, pollution)
+  • Defense spending: 7+ enhancements
+  • Immigration/border: 6+ enforcement provisions
+
+Priority order for observation creation:
+  1. Immigration restrictions (consolidated impact)
+  2. EV credit eliminations (clear policy reversal)
+  3. DoD budget integration (largest spending)
+  4. SNAP restriction cascade (welfare impact)
+  5. Environmental asymmetry (extraction vs. clean)
+

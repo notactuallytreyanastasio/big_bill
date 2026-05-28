@@ -1,0 +1,83 @@
+================================================================================
+CROSS-TITLE OBSERVATION LINKING — ACTIONABLE FIX LIST
+================================================================================
+
+These 18 observations currently have only 1 outgoing edge each but should connect
+to multiple related sections. Add the missing edges in bold to complete the patterns.
+
+─────────────────────────────────────────────────────────────────────────────
+TIER 1: HIGHEST IMPACT (Fix first)
+─────────────────────────────────────────────────────────────────────────────
+
+274 | Triple-layer immigration exclusion (Medicare + Medicaid + ACA)
+    Current links: 1
+    Missing links: Should also connect to:
+      - SEC 71119 (Medicaid work requirements — part of same restriction)
+      - SEC 10108 (Alien SNAP eligibility)
+      - SEC 71301-71302 (ACA related provisions)
+    Action: Add edges 274→71119, 274→10108, 274→71301, 274→71302
+
+290 | IRA Rescissions Total Across All Titles
+    Current links: 1
+    Missing links: Should also connect to:
+      - SEC 30002 (Title III — housing retrofit rescission)
+      - SEC 60001-60009 (Title VI — 9+ environmental rescissions)
+      - SEC 50101-50105 (oil/gas instead of renewables)
+    Action: Identify all 12+ IRA rescissions and add edges from 290
+
+330 | Alien Eligibility Restrictions (SNAP + Medicare + ACA + Medicaid)
+    Current links: 1
+    Missing links: Should also connect to:
+      - SEC 10108 (SNAP alien restrictions)
+      - SEC 71201 (Medicare restrictions)
+      - SEC 71301, 71302 (ACA restrictions)
+      - SEC 71119 (Medicaid work requirements)
+    Action: Add edges 330→10108, 330→71201, 330→71301, 330→71302, 330→71119
+
+─────────────────────────────────────────────────────────────────────────────
+TIER 2: HIGH IMPACT (Fix second)
+─────────────────────────────────────────────────────────────────────────────
+
+132 | Cross-title IRA rollback pattern
+    Should link to all 12 IRA rescissions mentioned
+    
+151 | Integrated Enforcement Pipeline ($120B border architecture)
+    Should link: SEC 90001, 90002, 90003, 90004, 90005, 90006
+    
+241 | Fossil fuel vs. renewable asymmetry in fee structures (Title V)
+    Should link to specific coal/oil provisions vs. clean energy provisions
+
+─────────────────────────────────────────────────────────────────────────────
+TIER 3: MEDIUM IMPACT (Fix third)
+─────────────────────────────────────────────────────────────────────────────
+
+200 | Title II total: ~$150B largest defense supplemental
+    Should link to major DoD enhancement sections
+
+338 | Work Requirements Compound (Medicaid + SNAP)
+    Should link: SEC 10102 (SNAP) + SEC 71119 (Medicaid)
+
+369 | Military Construction may overlap with border wall
+    Should link: SEC 20013 + SEC 90001
+
+373 | SALT cap modifications affect state Medicaid matching
+    Should link: SEC 70120 + state Medicaid impact sections
+
+374 | Child Tax Credit SSN tightening
+    Should link to all provisions using the shared §24(h)(7) definition
+
+─────────────────────────────────────────────────────────────────────────────
+INSTRUCTIONS FOR MANUAL LINKING
+─────────────────────────────────────────────────────────────────────────────
+
+For each observation ID above, use:
+
+  deciduous link <obs_id> <section_id> -r "Observation applies to this section"
+
+Example:
+  deciduous link 274 71119 -r "Triple-layer immigration restriction also applies to Medicaid work requirements"
+  deciduous link 274 10108 -r "Triple-layer immigration restriction also applies to SNAP"
+
+Run in order: TIER 1 first, then TIER 2, then TIER 3.
+After each batch, run: deciduous serve
+to verify the links show up in the web viewer.

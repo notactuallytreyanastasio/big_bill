@@ -1,0 +1,170 @@
+================================================================================
+DECIDUOUS DECISION GRAPH AUDIT — BIG BILL PROJECT
+================================================================================
+
+EXECUTIVE SUMMARY
+─────────────────────────────────────────────────────────────────────────────
+
+Graph Status: 496 nodes, 773 edges, 100% node connectivity
+Health: GOOD STRUCTURE, NEEDS CROSS-LINKING AND OBSERVATIONS
+
+Node Composition:
+  • 15 goal nodes (bill titles)
+  • 327 action nodes (bill sections)
+  • 154 observation nodes (analysis/patterns)
+
+FINDINGS
+─────────────────────────────────────────────────────────────────────────────
+
+1. ORPHANED NODES
+   ✓ PASS: Zero orphaned nodes. Every node has at least one edge.
+   
+   Finding: All 496 nodes are connected to the graph. No isolation detected.
+
+─────────────────────────────────────────────────────────────────────────────
+
+2. OBSERVATION COVERAGE FOR ACTION NODES
+   ✗ CRITICAL GAP: 218 of 327 actions (67%) lack related observations
+   
+   Finding: Majority of sections mapped without impact/pattern analysis.
+   
+   Impact: Graph captures WHAT sections exist but lacks WHY/WHAT-IF analysis.
+           This weakens narrative value for understanding consequences.
+   
+   Priority Actions:
+     • Flag most important gap sections for observation creation
+     • Focus on: Title changes (I-VII), immigration restrictions, tax changes
+     • Key missing analyses:
+       - Individual SNAP changes (10102-10108): welfare impact analysis
+       - Individual DoD enhancements: cumulative defense spending pattern
+       - Individual EV credit terminations: electrification rollback pattern
+
+─────────────────────────────────────────────────────────────────────────────
+
+3. CROSS-TITLE OBSERVATIONS — UNDER-LINKED
+   ✗ CRITICAL GAP: 18 cross-cutting observations have only ONE edge
+   
+   These observations SHOULD connect multiple related sections but currently
+   point only to their parent or one child:
+   
+   ID 132: "Cross-title IRA rollback pattern" 
+           — Should link: SEC 30002 + SEC 60001 + SEC 60002 + others (12 total)
+           Currently: 1 outgoing edge
+   
+   ID 151: "Integrated Enforcement Pipeline — $120B border enforcement"
+           — Should link: SEC 90001 + SEC 90002 + SEC 90003 + 20013 + others
+           Currently: 1 outgoing edge
+   
+   ID 274: "Triple-layer immigration exclusion" (Medicare + Medicaid + ACA)
+           — Should link: SEC 71201 + 71301 + 71302 + 71119 + others
+           Currently: 1 outgoing edge
+   
+   ID 290: "IRA Rescissions Total Across All Titles"
+           — Should link to ALL 12+ IRA rescissions across titles
+           Currently: 1 outgoing edge
+   
+   ID 330: "Alien Eligibility Restrictions" (SNAP + Medicare + ACA + Medicaid)
+           — Should link: SEC 10108 + 71201 + 71301 + 71119 + others
+           Currently: 1 outgoing edge
+   
+   Priority: Add 3-5 additional edges per observation to connect the sections
+             it analyzes.
+
+─────────────────────────────────────────────────────────────────────────────
+
+4. SECTION COVERAGE vs. BILL TEXT
+   ✗ GAP: 305 of 327 sections mapped (93% coverage)
+   
+   Missing sections (22 uncovered):
+   
+   Tax Code sections (these appear in Title VII):
+     100201, 100202, 100203, 100204, 100205 (5 sections)
+     6039K, 6039L, 6050AA, 6434, 6435, 6659, 6695B, 6726 (8 sections)
+     139J, 139K, 139L (3 sections)
+   
+   Other Internal Revenue Code:
+     4475, 4968, 1062, 1899C, 5A, 25F, 530A, 51B, 17, 112, 128, 139J, 174A, 224, 225
+   
+   Severity: MEDIUM
+   These are tax code cross-references and some may be minor conforming amendments.
+   Recommend spot-check to determine if they warrant separate action nodes.
+
+─────────────────────────────────────────────────────────────────────────────
+
+AUDIT CHECKLIST RESULTS
+─────────────────────────────────────────────────────────────────────────────
+
+✓ Does every outcome link back to what caused it?
+  → Not applicable: Graph is mostly action/observation structure, not outcome-focused
+
+✓ Does every action link to why you did it?
+  → Partially: 327 actions link to 15 goal nodes (titles), but lack fine-grained
+    option/decision nodes explaining WHICH APPROACH was chosen
+
+✗ Any dangling outcomes without parents?
+  → Not applicable: Graph has no outcome nodes
+
+─────────────────────────────────────────────────────────────────────────────
+
+RECOMMENDATIONS (Priority Order)
+─────────────────────────────────────────────────────────────────────────────
+
+HIGH PRIORITY (Impact on narrative value):
+
+  1. Link cross-title observations to all referenced sections
+     Expected: 18 observations × 3-5 additional edges = ~72 new edges
+     Effort: High (requires semantic review of each observation)
+     Value: Makes patterns traceable end-to-end
+     
+     Top 5 to fix:
+       - ID 274: Triple-layer immigration (Medicare + Medicaid + ACA)
+       - ID 290: IRA rescissions across all titles
+       - ID 330: Alien eligibility restrictions
+       - ID 132: Cross-title IRA rollback
+       - ID 151: Border enforcement integration
+
+  2. Create outcome nodes for major consequences
+     Expected: Add 30-50 outcome nodes for significant provisions
+     Effort: Medium (requires domain analysis)
+     Value: Transforms graph from WHAT/WHERE to WHAT/WHERE/SO-WHAT
+     
+     Focus areas:
+       - SNAP benefit changes (impact on food insecurity)
+       - Tax changes (impact on household finances)
+       - Immigration restrictions (impact on eligibility)
+
+MEDIUM PRIORITY:
+
+  3. Add observations to high-impact sections without analysis (67% gap)
+     Focus on: Largest budget items, most restrictive provisions
+     Example gaps:
+       - SEC. 10102: Work requirements — need behavioral impact analysis
+       - SEC. 20001-20007: DoD enhancements — need integrated budget view
+       - SEC. 70501-70505: EV credit terminations — need electrification analysis
+
+  4. Cross-check 22 missing sections against bill text
+     Determine if they're conforming amendments or substantive
+
+LOW PRIORITY:
+
+  5. Add option/decision nodes for major tradeoffs
+     Current: 15 goals → 327 actions (missing middle layer)
+     This would enhance explainability but less critical for mapping
+
+─────────────────────────────────────────────────────────────────────────────
+
+CONCLUSION
+─────────────────────────────────────────────────────────────────────────────
+
+The graph is structurally sound (496 nodes, 100% connected) and covers 93% of
+bill sections. Primary gaps are:
+
+1. Cross-title observations under-linked (need 2-4 more edges each)
+2. Observation coverage sparse (67% of actions lack analysis)
+3. Missing ~22 tax code cross-references (likely minor)
+
+With cross-linking and outcome/observation additions, this would transform
+from a REFERENCE MAP into an ANALYSIS GRAPH showing consequences and patterns.
+
+Next session: Run `deciduous serve` to visualize the current state and begin
+systematic edge-addition for cross-title observations.

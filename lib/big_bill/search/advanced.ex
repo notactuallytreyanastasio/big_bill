@@ -741,7 +741,7 @@ defmodule BigBill.Search.Advanced do
     db_path = duckdb_path()
 
     if File.exists?(db_path) do
-      case Duckdbex.open(db_path, %{access_mode: :read_only}) do
+      case Duckdbex.open(db_path) do
         {:ok, db} ->
           case Duckdbex.connection(db) do
             {:ok, conn} ->
